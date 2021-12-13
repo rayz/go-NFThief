@@ -24,6 +24,10 @@ type OpenSeaAssetResponse struct {
 	Assets []asset `json:"assets"`
 }
 
+type collection struct {
+	Slug string `json:"slug"`
+}
+
 func downloadAssets(slug string, assets []asset) {
 	if _, err := os.Stat(slug); os.IsNotExist(err) {
 		err := os.Mkdir(slug, 0755)
@@ -74,11 +78,33 @@ func getAssets(slug string) []asset {
 	return osap.Assets
 }
 
+func getCollections(walletAddress string) {
+	url := "https://api.opensea.io/api/v1/collections?asset_owner=0x72e7212EF9d93244C93BF4DB64E69b582CcaC0D4&offset=0&limit=300"
+	res, err := http.Get(url)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer res.Body.Close()
+
+	body, err := ioutil.ReadAll(res.Body)
+	if err != nil {
+		log.Fatal(err)
+	}
+	collections := []collection{}
+
+	err = json.Unmarshal(body, &collections)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
 func main() {
+	scanner := bufio.NewScanner(os.Stdin)
 	for {
 		prompt := promptui.Select{
 			Label: "Select Action",
-			Items: []string{"Download a collection", "Exit"},
+			Items: []string{"Download a collection", "Download collection of owner", "Exit"},
 		}
 
 		_, result, err := prompt.Run()
@@ -91,7 +117,6 @@ func main() {
 		switch result {
 		case "Download a collection":
 			fmt.Print("Enter a collection name: ")
-			scanner := bufio.NewScanner(os.Stdin)
 			ok := scanner.Scan()
 			if ok != true {
 				break
@@ -105,6 +130,16 @@ func main() {
 			} else {
 				fmt.Println("Collection", collectionName, "does not exist")
 			}
+		case "Download collection of owner":
+			//			fmt.Print("Enter owner's wallet address: ")
+			//			ok := scanner.Scan()
+			//			if ok != true {
+			//				break
+			//			}
+			//			walletAddress := scanner.Text()
+			walletAddress := "0x72e7212EF9d93244C93BF4DB64E69b582CcaC0D4"
+			getCollections(walletAddress)
+
 		case "Exit":
 			os.Exit(0)
 		}
