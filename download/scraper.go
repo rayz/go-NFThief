@@ -13,34 +13,35 @@ import (
 	"strings"
 )
 
-type Asset struct {
+type asset struct {
 	ImageUrl string `json:"image_url"`
 	Name     string `json:"name"`
 }
 
-type OpenSeaAssetResponse struct {
-	Assets []Asset `json:"assets"`
+type openSeaAssetResponse struct {
+	Assets []asset `json:"assets"`
 }
 
-type Address struct {
+type address struct {
 	ContractAddress string `json:"address"`
 }
 
-type Collection struct {
-	PrimaryAssetContracts []Address `json:"primary_asset_contracts"`
+type collection struct {
+	PrimaryAssetContracts []address `json:"primary_asset_contracts"`
 	Slug                  string    `json:"slug"`
 }
 
-func downloadAssets(slug string, assets []Asset) {
+func downloadAssets(slug string, assets []asset) {
 	if _, err := os.Stat(slug); os.IsNotExist(err) {
 		err := os.MkdirAll(slug, 0755)
 		if err != nil {
-			log.Fatal(err)
+			return
 		}
 		for _, asset := range assets {
 			res, err := http.Get(asset.ImageUrl)
 			if err != nil {
-				log.Fatal(err)
+				fmt.Println("Could not download:", asset.ImageUrl)
+				continue
 			}
 			defer res.Body.Close()
 			h := fnv.New64a()
@@ -50,7 +51,8 @@ func downloadAssets(slug string, assets []Asset) {
 			fmt.Println("Downloading to:", f)
 			out, err := os.Create(f)
 			if err != nil {
-				log.Fatal(err)
+				fmt.Println("Could not create:", f)
+				continue
 			}
 			defer out.Close()
 			_, err = io.Copy(out, res.Body)
@@ -60,7 +62,7 @@ func downloadAssets(slug string, assets []Asset) {
 	}
 }
 
-func getAssets(slug, url string) []Asset {
+func getAssets(slug, url string) []asset {
 
 	res, err := http.Get(url)
 	if err != nil {
@@ -71,7 +73,7 @@ func getAssets(slug, url string) []Asset {
 
 	body, _ := ioutil.ReadAll(res.Body)
 
-	osap := OpenSeaAssetResponse{}
+	osap := openSeaAssetResponse{}
 	err = json.Unmarshal(body, &osap)
 
 	if err != nil {
@@ -80,7 +82,7 @@ func getAssets(slug, url string) []Asset {
 	return osap.Assets
 }
 
-func getCollections(walletAddress string) []Collection {
+func getCollections(walletAddress string) []collection {
 	url := fmt.Sprintf("https://api.opensea.io/api/v1/collections?asset_owner=%s&offset=0&limit=300", walletAddress)
 	res, err := http.Get(url)
 	if err != nil {
@@ -92,7 +94,7 @@ func getCollections(walletAddress string) []Collection {
 	if err != nil {
 		log.Fatal(err)
 	}
-	collections := []Collection{}
+	collections := []collection{}
 
 	err = json.Unmarshal(body, &collections)
 
@@ -115,7 +117,6 @@ func DownloadByCollection() {
 	url := fmt.Sprintf("https://api.opensea.io/api/v1/assets?order_by=sale_price&order_direction=desc&offset=0&collection=%s&limit=50&", collectionName)
 	assets := getAssets(collectionName, url)
 	if len(assets) > 0 {
-		fmt.Println("Going to download..")
 		downloadAssets(collectionName, assets)
 	} else {
 		fmt.Println("Collection", collectionName, "does not exist")
@@ -133,9 +134,11 @@ func DownloadByOwner() {
 	walletAddress := scanner.Text()
 	collections := getCollections(walletAddress)
 	for _, collection := range collections {
-		url := fmt.Sprintf("https://api.opensea.io/api/v1/assets?owner=%s&asset_contract_address=%s&order_direction=desc&offset=0&limit=50", walletAddress, collection.PrimaryAssetContracts[0].ContractAddress)
-		assets := getAssets(collection.Slug, url)
-		slug := fmt.Sprintf("%s/%s", walletAddress, collection.Slug)
-		downloadAssets(slug, assets)
+		if len(collection.PrimaryAssetContracts) > 0 {
+			url := fmt.Sprintf("https://api.opensea.io/api/v1/assets?owner=%s&asset_contract_address=%s&order_direction=desc&offset=0&limit=50", walletAddress, collection.PrimaryAssetContracts[0].ContractAddress)
+			assets := getAssets(collection.Slug, url)
+			slug := fmt.Sprintf("%s/%s", walletAddress, collection.Slug)
+			downloadAssets(slug, assets)
+		}
 	}
 }
