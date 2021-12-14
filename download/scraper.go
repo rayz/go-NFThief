@@ -60,7 +60,12 @@ func downloadAssets(slug string, assets []asset) {
 		}
 		defer res.Body.Close()
 		h := fnv.New64a()
-		h.Write([]byte(asset.ImageUrl))
+		_, err = h.Write([]byte(asset.ImageUrl))
+		if err != nil {
+			fmt.Println("Could not hash:", asset.ImageUrl)
+			continue
+		}
+
 		name := fmt.Sprint(h.Sum64())
 		f := fmt.Sprintf("%s/%s", slug, name)
 		fmt.Println("Downloading to:", f)
@@ -71,6 +76,11 @@ func downloadAssets(slug string, assets []asset) {
 		}
 		defer out.Close()
 		_, err = io.Copy(out, res.Body)
+
+		if err != nil {
+			fmt.Println("Could not copy to:", f)
+			continue
+		}
 	}
 
 }
@@ -144,7 +154,7 @@ func DownloadByCollection() {
 	scanner := bufio.NewScanner(os.Stdin)
 	fmt.Print("Enter a collection name: ")
 	ok := scanner.Scan()
-	if ok != true {
+	if !ok {
 		return
 	}
 	collectionName := strings.Join(strings.Split(strings.ToLower(scanner.Text()), " "), "")
@@ -158,8 +168,8 @@ func DownloadByCollection() {
 		url := fmt.Sprintf("https://api.opensea.io/api/v1/assets?order_direction=desc&offset=%d&collection=%s&limit=50&", int(i*50), collectionName)
 		assets := getAssets(collectionName, url)
 		if len(assets) > 0 {
+			wg.Add(1)
 			go func(a []asset) {
-				wg.Add(1)
 				downloadAssets(collectionName, a)
 				wg.Done()
 			}(assets)
@@ -176,7 +186,7 @@ func DownloadByOwner() {
 	scanner := bufio.NewScanner(os.Stdin)
 	fmt.Print("Enter owner's wallet address: ")
 	ok := scanner.Scan()
-	if ok != true {
+	if !ok {
 		return
 	}
 	walletAddress := scanner.Text()
@@ -187,8 +197,8 @@ func DownloadByOwner() {
 			url := fmt.Sprintf("https://api.opensea.io/api/v1/assets?owner=%s&asset_contract_address=%s&order_direction=desc&offset=0&limit=50", walletAddress, collection.PrimaryAssetContracts[0].ContractAddress)
 			assets := getAssets(collection.Slug, url)
 			if len(assets) > 0 {
+				wg.Add(1)
 				go func(a []asset) {
-					wg.Add(1)
 					slug := fmt.Sprintf("%s/%s", walletAddress, collection.Slug)
 					downloadAssets(slug, assets)
 					wg.Done()
