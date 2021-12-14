@@ -60,7 +60,12 @@ func downloadAssets(slug string, assets []asset) {
 		}
 		defer res.Body.Close()
 		h := fnv.New64a()
-		h.Write([]byte(asset.ImageUrl))
+		_, err = h.Write([]byte(asset.ImageUrl))
+		if err != nil {
+			fmt.Println("Could not hash:", asset.ImageUrl)
+			continue
+		}
+
 		name := fmt.Sprint(h.Sum64())
 		f := fmt.Sprintf("%s/%s", slug, name)
 		fmt.Println("Downloading to:", f)
