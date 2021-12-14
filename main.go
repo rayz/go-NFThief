@@ -2,9 +2,10 @@ package main
 
 import (
 	"fmt"
-	"github.com/manifoldco/promptui"
 	"go-NFThief/download"
 	"os"
+
+	"github.com/manifoldco/promptui"
 )
 
 func main() {
