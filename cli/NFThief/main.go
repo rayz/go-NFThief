@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"go-NFThief/download"
+	"github.com/rayz/go-NFThief/pkg/download"
 	"os"
 
 	"github.com/manifoldco/promptui"
