@@ -11,6 +11,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -40,25 +41,13 @@ type collectionStats struct {
 	} `json:"stats"`
 }
 
-func downloadAssets(slug string, assets []asset) {
-	if _, err := os.Stat(slug); os.IsNotExist(err) {
-		err := os.MkdirAll(slug, 0755)
-		if err != nil {
-			return
-		}
-		fmt.Println(slug, "folder created")
-	}
+func downloadAssets(slug, target string, assets []asset, wg *sync.WaitGroup, limits chan bool) {
 	for _, asset := range assets {
 		res, err := http.Get(asset.ImageUrl)
 		if err != nil {
-			fmt.Println("Could not download:", asset.ImageUrl)
+			fmt.Println("Could not download:", asset.ImageUrl, err)
 			continue
 		}
-		if res.StatusCode == 429 { // slow down
-			fmt.Println("Cooling down.. waiting 30 seconds")
-			time.Sleep(time.Second * 30)
-		}
-		defer res.Body.Close()
 		h := fnv.New64a()
 		_, err = h.Write([]byte(asset.ImageUrl))
 		if err != nil {
@@ -67,8 +56,8 @@ func downloadAssets(slug string, assets []asset) {
 		}
 
 		name := fmt.Sprint(h.Sum64())
-		f := fmt.Sprintf("%s/%s", slug, name)
-		fmt.Println("Downloading to:", f)
+		f := fmt.Sprintf("%s/%s", target, name)
+		//		fmt.Println("Downloading to:", f)
 		out, err := os.Create(f)
 		if err != nil {
 			fmt.Println("Could not create:", f)
@@ -76,6 +65,7 @@ func downloadAssets(slug string, assets []asset) {
 		}
 		defer out.Close()
 		_, err = io.Copy(out, res.Body)
+		res.Body.Close()
 
 		if err != nil {
 			fmt.Println("Could not copy to:", f)
@@ -85,16 +75,29 @@ func downloadAssets(slug string, assets []asset) {
 
 }
 
-func getAssets(slug, url string) []asset {
+func getAssets(slug, url, target string, wg *sync.WaitGroup, limits chan bool) {
+	limits <- true
+
+	defer wg.Done()
+
+	defer func() {
+		<-limits
+	}()
 
 	res, err := http.Get(url)
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	defer res.Body.Close()
+	if res.StatusCode == 429 { // slow down
+		retry_after := res.Header.Get("Retry-After")
+		wait, _ := strconv.Atoi(retry_after)
+		time.Sleep(time.Second * time.Duration(wait))
+		res, err = http.Get(url)
+	}
 
 	body, _ := ioutil.ReadAll(res.Body)
+
+	res.Body.Close()
 
 	osap := openSeaAssetResponse{}
 	err = json.Unmarshal(body, &osap)
@@ -102,7 +105,13 @@ func getAssets(slug, url string) []asset {
 	if err != nil {
 		log.Fatal(err)
 	}
-	return osap.Assets
+
+	if len(osap.Assets) > 0 {
+		downloadAssets(slug, target, osap.Assets, wg, limits)
+	} else {
+		fmt.Println("Could not download", url)
+		fmt.Println(osap.Assets)
+	}
 }
 
 func getCollections(walletAddress string) []collection {
@@ -158,24 +167,28 @@ func DownloadByCollection() {
 		return
 	}
 	collectionName := strings.Join(strings.Split(strings.ToLower(scanner.Text()), " "), "")
+	if _, err := os.Stat(collectionName); os.IsNotExist(err) {
+		err := os.MkdirAll(collectionName, 0755)
+		if err != nil {
+			return
+		}
+		fmt.Println(collectionName, "folder created")
+	}
 	fmt.Println("Trying to download:", collectionName)
 
 	stats := getStats(collectionName)
 	supply := stats.Stats.TotalSupply
 
-	var wg sync.WaitGroup
+	wg := new(sync.WaitGroup)
+
+	workers := 7
+	limits := make(chan bool, workers)
+	wg.Add(int(math.Ceil(supply / 50)))
 	for i := 0.0; i < math.Ceil(supply/50); i++ {
-		url := fmt.Sprintf("https://api.opensea.io/api/v1/assets?order_direction=desc&offset=%d&collection=%s&limit=50&", int(i*50), collectionName)
-		assets := getAssets(collectionName, url)
-		if len(assets) > 0 {
-			wg.Add(1)
-			go func(a []asset) {
-				downloadAssets(collectionName, a)
-				wg.Done()
-			}(assets)
-		} else {
-			fmt.Println("Could not download assets from", url)
-		}
+		url := fmt.Sprintf("https://api.opensea.io/api/v1/assets?order_direction=desc&offset=%d&collection=%s&limit=50", int(i*50), collectionName)
+		go func() {
+			getAssets(collectionName, url, collectionName, wg, limits)
+		}()
 	}
 	wg.Wait()
 	fmt.Println(time.Since(start), "taken to download", collectionName, "collection")
@@ -191,20 +204,17 @@ func DownloadByOwner() {
 	}
 	walletAddress := scanner.Text()
 	collections := getCollections(walletAddress)
-	var wg sync.WaitGroup
+	wg := new(sync.WaitGroup)
+
+	workers := 7
+	limits := make(chan bool, workers)
 	for _, collection := range collections {
 		if len(collection.PrimaryAssetContracts) > 0 {
 			url := fmt.Sprintf("https://api.opensea.io/api/v1/assets?owner=%s&asset_contract_address=%s&order_direction=desc&offset=0&limit=50", walletAddress, collection.PrimaryAssetContracts[0].ContractAddress)
-			assets := getAssets(collection.Slug, url)
-			if len(assets) > 0 {
-				wg.Add(1)
-				go func(a []asset) {
-					slug := fmt.Sprintf("%s/%s", walletAddress, collection.Slug)
-					downloadAssets(slug, assets)
-					wg.Done()
-				}(assets)
-
-			}
+			target := fmt.Sprintf("%s/%s", walletAddress, collection.Slug)
+			go func() {
+				getAssets(collection.Slug, url, target, wg, limits)
+			}()
 		}
 	}
 	wg.Wait()
